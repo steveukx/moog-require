@@ -16,8 +16,11 @@ module.exports = function(options) {
 
   self.root = self.options.root;
 
+  self.definitionFileFilter = self.options.definitionFileFilter || 'index.{js,ts}';
+  self.definitionFileDefault = self.options.definitionFileDefault || 'index.js';
+
   self.bundled = {};
-  
+
   self.improvements = {};
 
   if (self.options.bundles) {
@@ -40,12 +43,20 @@ module.exports = function(options) {
     });
   }
 
+  self.moduleDefinePath = function (type) {
+     const root = self.options.localModules + (options.nestedModuleSubdirs ? '/**' : '');
+     const matches = glob.sync(`${root}/${type}/${self.definitionFileFilter}`);
+
+     if (matches.length > 1) {
+        throw new Error(`The module ${type} appears in multiple locations:\n${ matches.join('\n') }`);
+     }
+
+     return path.normalize(
+        matches.length === 1 && matches[0] || `${root}/${type}/${self.definitionFileDefault}`
+     );
+  };
+
   var superDefine = self.define;
-
-  if (options.nestedModuleSubdirs) {
-    self._globCache = {};
-  }
-
   self.define = function(type, definition, extending) {
 
     var result;
@@ -58,20 +69,8 @@ module.exports = function(options) {
     var projectLevelDefinition;
     var npmDefinition;
     var originalType;
-    var projectLevelPath = self.options.localModules + '/' + type + '/index.js';
+    var projectLevelPath = self.moduleDefinePath(type);
 
-    if (options.nestedModuleSubdirs) {
-      var globOptions = {
-        cache: self._globCache
-      };
-
-      var matches = glob.sync(self.options.localModules + '/**/' + type + '/index.js', globOptions);
-      
-      if (matches.length > 1) {
-        throw new Error('The module ' + type + ' appears in multiple locations:\n' + matches.join('\n'));
-      }
-      projectLevelPath = matches[0] ? path.normalize(matches[0]) : projectLevelPath;
-    }
     if (fs.existsSync(projectLevelPath)) {
       projectLevelDefinition = importFresh(resolveFrom(path.dirname(self.root.filename), projectLevelPath));
     }
@@ -164,11 +163,10 @@ module.exports = function(options) {
       return null;
     }
   }
-  
+
   self.isImprovement = function(name) {
     return _.has(self.improvements, name);
   };
 
   return self;
 };
-
