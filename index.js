@@ -7,57 +7,40 @@ var glob = require('glob');
 var importFresh = require('import-fresh');
 var resolveFrom = require('resolve-from');
 
-function moduleLoad (path) {
-  const imported = importFresh(path);
-  const result = imported && imported.__esModule && imported.default || imported;
-
-  // console.log(path, result);
-
-  return result;
-}
-
-function modulePath (self, options) {
-  const globOptions = { cache: {} };
-  function search(root, type) {
-    const matches = glob.sync(`${root}/${type}/${self.definitionFileFilter}`, globOptions);
-
-    if (matches.length > 1) {
-      throw new Error(`The module ${type} appears in multiple locations:\n${matches.join('\n')}`);
-    }
-
-    return matches.length && matches[0];
-  }
-
-  return function (type) {
-    const match = (options.nestedModuleSubdirs && search(`${self.options.localModules}/**`, type)) ||
-       search(`${self.options.localModules}/`, type) ||
-       `${self.options.localModules}/${type}/${self.definitionFileDefault}`;
-
-    console.log(type, match);
-
-    return path.normalize(match);
-  };
-}
-
-module.exports = function (options) {
+module.exports = function(options) {
   var self = require('moog')(options);
 
   if (!self.options.root) {
     throw 'The root option is required. Pass the node variable "module" as root. This allows moog to require modules on your behalf.';
   }
 
-  self.root = self.options.root;
+  self.definitionFileFilter = 'index.{ts,js}';
+  self.definitionFileDefault = 'index.js';
+  self._globCache = {};
 
-  self.definitionFileFilter = self.options.definitionFileFilter || 'index.{js,ts}';
-  self.definitionFileDefault = self.options.definitionFileDefault || 'index.js';
+  self.getProjectLevelPath = function (type) {
+    var prefix = `${self.options.localModules}${self.options.nestedModuleSubdirs ? '/**' : ''}`;
+    var filter = `${prefix}/${type}/${self.definitionFileFilter}`;
+    var matches = glob.sync(filter, { cache: self._globCache });
+    if (matches.length > 1) {
+      throw new Error('The module ' + type + ' appears in multiple locations:\n' + matches.join('\n'));
+    }
+
+    return path.resolve(
+       matches.length && matches[0] || `${self.options.localModules}/${type}/${self.definitionFileDefault}`
+    );
+  }
+
+  self.importFresh =function (path) {
+    const imported = importFresh(path);
+    return imported && imported.__esModule && imported.default || imported;
+  };
+
+  self.root = self.options.root;
 
   self.bundled = {};
 
   self.improvements = {};
-
-  self.moduleLoad = moduleLoad;
-
-  self.modulePath = modulePath(self, options);
 
    if (self.options.bundles) {
       _.each(self.options.bundles, function (bundleName) {
@@ -65,7 +48,7 @@ module.exports = function (options) {
          if (!bundlePath) {
             throw 'The configured bundle ' + bundleName + ' was not found in npm.';
          }
-         var bundle = self.moduleLoad(bundlePath);
+         var bundle = self.importFresh(bundlePath);
          if (!bundle.moogBundle) {
             throw 'The configured bundle ' + bundleName + ' does not export a moogBundle property.';
          }
@@ -97,10 +80,10 @@ module.exports = function (options) {
     var projectLevelDefinition;
     var npmDefinition;
     var originalType;
-    var projectLevelPath = self.modulePath(type);
+    var projectLevelPath = self.getProjectLevelPath(type);
 
     if (fs.existsSync(projectLevelPath)) {
-      projectLevelDefinition = self.moduleLoad(resolveFrom(path.dirname(self.root.filename), projectLevelPath));
+      projectLevelDefinition = self.importFresh(resolveFrom(path.dirname(self.root.filename), projectLevelPath));
     }
 
     var relativeTo;
@@ -112,7 +95,7 @@ module.exports = function (options) {
 
     var npmPath = getNpmPath(relativeTo, type);
     if (npmPath) {
-      npmDefinition = self.moduleLoad(npmPath);
+      npmDefinition = self.importFresh(npmPath);
       npmDefinition.__meta = {
         npm: true,
         dirname: path.dirname(npmPath),
